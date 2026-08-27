@@ -1,0 +1,324 @@
+---
+title: "Data Wrangling with dplyr"
+author: "Foundations of Business Analytics"
+format: html
+---
+
+## The business question
+
+Suppose we want to compare industries in the Australian share market and ask:
+
+**Which ASX industries appear strongest on return on invested capital (ROIC) in 2024?**
+
+This is a useful question because raw profit numbers can be misleading. Larger firms often earn larger profits simply because they are larger. ROIC helps us compare profitability relative to the capital used.
+
+## Load packages
+
+```{r}
+library(tidyverse)
+library(ggokabeito)
+library(scales)
+```
+
+## Load the data
+
+```{r}
+asx_200_2024 <- read_csv("data/asx_200_2024.csv")
+```
+
+## Inspect the data
+
+First, let’s look at the first few rows.
+
+```{r}
+head(asx_200_2024, n = 10)
+```
+
+Now let’s look at the structure of the dataset.
+
+```{r}
+glimpse(asx_200_2024)
+```
+
+This helps us see the variable names, their data types, and the general shape of the data.
+
+## Using `filter()` to keep rows
+
+`filter()` keeps only the rows that match a condition.
+
+For example, the code below keeps only firms with positive invested capital.
+
+```{r}
+positive_investment <- filter(asx_200_2024, invested_capital > 0)
+head(positive_investment)
+```
+
+We can also use `filter()` to find missing values.
+
+```{r}
+missing_ebit <- filter(asx_200_2024, is.na(ebit))
+head(missing_ebit)
+```
+
+Here, `is.na(ebit)` means “keep rows where `ebit` is missing.”
+
+More often, we want to keep rows where a value is available.
+
+```{r}
+nonmissing_ebit <- filter(asx_200_2024, !is.na(ebit))
+head(nonmissing_ebit)
+```
+
+The `!` symbol means “not,” so `!is.na(ebit)` means “keep rows where `ebit` is not missing.”
+
+We can combine conditions inside `filter()`.
+
+```{r}
+asx_clean <- filter(asx_200_2024, !is.na(ebit), invested_capital > 0)
+```
+
+This keeps only firms with non-missing EBIT and positive invested capital.
+
+## Using `mutate()` to create new columns
+
+`mutate()` creates new columns or changes existing ones.
+
+Here, we create a new variable called `roic`.
+
+```{r}
+asx_roic <- mutate(asx_clean, roic = ebit / invested_capital)
+```
+
+Now let’s inspect the result.
+
+```{r}
+head(
+  select(asx_roic, conml, industry, ebit, invested_capital, roic),
+  n = 10
+)
+```
+
+This is a common use of `mutate()`: creating a new variable by combining existing columns.
+
+`mutate()` can also create a new column by applying a function.
+
+```{r}
+asx_roic_names <- mutate(asx_roic, conml_upper = str_to_upper(conml))
+```
+
+```{r}
+slice_head(
+  select(asx_roic_names, conml, conml_upper, roic),
+  n = 10
+)
+```
+
+Here, `str_to_upper()` changes the company name into uppercase text.
+
+## Using the pipe `|>` to connect steps
+
+So far, we have worked in separate steps:
+
+1. filter the data
+2. create a new variable with `mutate()`
+
+That is often a good way to work when you want to check your progress carefully.
+
+Sometimes, we'd want to run all of those steps at once. One way to do it would be to nest the commands:
+
+```{r}
+slice_head(
+  select(
+    mutate(
+      filter(asx_200_2024, !is.na(ebit), invested_capital > 0),
+      roic = ebit / invested_capital
+    ),
+    conml, industry, ebit, invested_capital, roic
+  ),
+  n = 10
+)
+```
+
+To make sense of this code, we have to read 'inside out'. Find the most nested function, in this case filter and then work outwards to see the chain of commands that were used. This is hard to read.
+
+Another option is to connect the steps using the pipe operator, `|>`.
+
+The pipe takes the result from one line and passes it into the next line. For example:
+
+```{r}
+asx_roic_pipe <- asx_200_2024 |>
+  filter(!is.na(ebit), invested_capital > 0) |>
+  mutate(roic = ebit / invested_capital)
+```
+
+```{r}
+asx_roic_pipe |>
+  select(conml, industry, ebit, invested_capital, roic) |>
+  slice_head(n = 10)
+```
+
+
+## Using `group_by()`, `summarise()`, and `arrange()`
+
+Now we move from firm-level data to industry-level summaries.
+
+`group_by()` tells R to divide the data into groups. Here, the groups are industries.
+
+`summarise()` then computes one or more summary statistics within each group.
+
+`arrange()` orders the rows in the result.
+
+```{r}
+industry_roic <- asx_roic_pipe |>
+  group_by(industry) |>
+  summarise(
+    avg_roic = mean(roic, na.rm = TRUE),
+    n_firms = n(),
+    .groups = "drop"
+  ) |>
+  arrange(desc(avg_roic))
+```
+
+```{r}
+industry_roic
+```
+
+This gives us one row per industry, along with the average ROIC and the number of firms in that industry.
+
+Some industries only contain a small number of firms, so we may want to focus on industries with a reasonable number of observations.
+
+```{r}
+industry_roic_5plus <- industry_roic |>
+  filter(n_firms >= 5)
+```
+
+
+## Advanced Material [if time]
+
+### Using `if_else()` to create two categories
+
+`if_else()` is useful when we want to create a variable with two possible categories.
+
+Here, we classify industries as above or below the median average ROIC.
+
+```{r}
+industry_roic_5plus <- industry_roic_5plus |>
+  mutate(
+    roic_vs_median = if_else(
+      avg_roic >= median(avg_roic, na.rm = TRUE),
+      "Above median",
+      "Below median"
+    )
+  )
+```
+
+```{r}
+industry_roic_5plus |>
+  select(industry, avg_roic, roic_vs_median) |>
+  slice_head(n = 10)
+```
+
+### Using `case_when()` to create more categories
+
+`case_when()` is useful when we want more than two categories.
+
+First, calculate the quartile cutoffs.
+
+```{r}
+roic_q25 <- quantile(industry_roic_5plus$avg_roic, 0.25, na.rm = TRUE)
+roic_q50 <- quantile(industry_roic_5plus$avg_roic, 0.50, na.rm = TRUE)
+roic_q75 <- quantile(industry_roic_5plus$avg_roic, 0.75, na.rm = TRUE)
+```
+
+Now classify industries into quartile-style groups.
+
+```{r}
+industry_roic_5plus |>
+  mutate(
+    performance_band = case_when(
+      avg_roic >= roic_q75 ~ "Top quartile",
+      avg_roic >= roic_q50 ~ "Upper-middle",
+      avg_roic >= roic_q25 ~ "Lower-middle",
+      TRUE ~ "Bottom quartile"
+    )
+  ) |>
+  select(industry, avg_roic, performance_band) |>
+  slice_head(n = 10)
+```
+
+### Grouping by combinations of variables
+
+We can also group by more than one variable at the same time.
+
+To show that, let’s go back to the firm-level data and create an above/below median ROIC category for firms.
+
+```{r}
+asx_roic_flag <- asx_roic |>
+  mutate(
+    roic_vs_median = if_else(
+      roic >= median(roic, na.rm = TRUE),
+      "Above median",
+      "Below median"
+    )
+  )
+```
+
+Now we group by both `industry` and `roic_vs_median`.
+
+```{r}
+industry_roic_split <- asx_roic_flag |>
+  group_by(industry, roic_vs_median) |>
+  summarise(
+    n_firms = n(),
+    .groups = "drop"
+  )
+```
+
+```{r}
+industry_roic_split
+```
+
+This creates summaries for combinations of variables rather than for just one grouping variable.
+
+## Summary plot
+
+Finally, let’s visualise the top 10 industries by average ROIC.
+
+```{r}
+top10_industries <- industry_roic_5plus |>
+  slice_head(n = 10) |>
+  mutate(industry = fct_reorder(industry, avg_roic))
+```
+
+```{r}
+top10_industries |>
+  ggplot(aes(x = industry, y = avg_roic, fill = industry)) +
+  geom_col(show.legend = FALSE) +
+  scale_fill_okabe_ito() +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "Average ROIC",
+    title = "Top ASX Industries by Average Return on Invested Capital",
+    subtitle = "Industries with at least 5 firms, 2024"
+  )
+```
+
+## What we learned
+
+In this workshop, we used `dplyr` to answer a business question using several core data-wrangling tools.
+
+We used:
+
+* `filter()` to keep the rows we needed
+* `mutate()` to create new columns
+* the pipe `|>` to connect steps
+* `group_by()` and `summarise()` to create grouped summaries
+* `arrange()` to rank the results
+* `if_else()` and `case_when()` to build categories from data
+
+The main idea is that data wrangling helps us move from raw data to a clear, interpretable answer.
+
+Here, our final answer was a ranked comparison of industries based on average ROIC.
+

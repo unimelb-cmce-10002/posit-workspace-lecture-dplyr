@@ -1,0 +1,403 @@
+---
+title: "Instructor Guide: Data Wrangling"
+author: "Foundations of Business Analytics"
+format: html
+---
+
+## Opening framing
+
+The goal today is not to show students lots of code. It is to show them how a few core `dplyr` tools help answer a business question.
+
+The question for the lecture is:
+
+**Which ASX industries appear strongest on return on invested capital (ROIC) in 2024?**
+
+### What to say
+
+* Today is about using code to answer a question, not code for its own sake.
+* The key mental model is: **rows → columns → groups → answer**.
+* We are going to move slowly.
+* The point is not to memorise everything at once. The point is to understand what each step is doing to the data.
+
+## Load packages
+
+```{r}
+library(tidyverse)
+library(scales)
+library(ggokabeito)
+```
+
+### What to say
+
+* `tidyverse` gives us the core tools for the lecture.
+* `scales` helps with readable labels later on.
+* `ggokabeito` gives us a colour-blind-friendly palette, which matters when we present results.
+
+## Load the data
+
+```{r}
+asx_200_2024 <- read_csv("../data/asx_200_2024.csv")
+```
+
+### What to say
+
+* We are starting with firm-level data on large ASX companies.
+* Before touching anything, we should look at what is actually in the dataset.
+
+## Inspect the data
+
+```{r}
+slice_head(asx_200_2024, n = 10)
+```
+
+```{r}
+glimpse(asx_200_2024)
+```
+
+### What to say
+
+* `slice_head()` gives us a quick look at the first few rows.
+* `glimpse()` shows us the variable names and data types.
+* Right now we are just getting our bearings.
+* The variables we care about for today are `ebit`, `invested_capital`, and `industry`.
+
+## `filter()`
+
+### What to say before coding
+
+* `filter()` keeps rows that satisfy a condition.
+* This is the rows part of the lecture.
+* We will start simple, then build toward the version we actually need.
+
+```{r}
+positive_investment <- filter(asx_200_2024, invested_capital > 0)
+head(positive_investment)
+```
+
+### What to say
+
+* This keeps only firms where `invested_capital > 0` is true.
+* The main idea is simple: if the condition is false, the row is dropped.
+
+```{r}
+missing_ebit <- filter(asx_200_2024, is.na(ebit))
+head(missing_ebit)
+```
+
+### What to say
+
+* `is.na(ebit)` means “show me the rows where EBIT is missing.”
+* Real data often has missing values, so this is a very practical pattern to know.
+
+```{r}
+nonmissing_ebit <- filter(asx_200_2024, !is.na(ebit))
+head(nonmissing_ebit)
+```
+
+### What to say
+
+* The `!` symbol means “not.”
+* So `!is.na(ebit)` means “keep rows where EBIT is available.”
+
+```{r}
+asx_clean <- filter(asx_200_2024, !is.na(ebit), invested_capital > 0)
+```
+
+### What to say
+
+* We can combine conditions inside `filter()`.
+* The comma here acts like AND.
+* So we are keeping firms with non-missing EBIT **and** positive invested capital.
+* This gives us a cleaner starting point for calculating ROIC.
+
+## `mutate()`
+
+### What to say before coding
+
+* `mutate()` creates new columns or changes existing ones.
+* This is the columns part of the lecture.
+
+```{r}
+asx_roic <- mutate(asx_clean, roic = ebit / invested_capital)
+```
+
+### What to say
+
+* Here we create a new variable called `roic`.
+* This is one of the most common uses of `mutate()`: build a new column from existing columns.
+
+```{r}
+slice_head(
+  select(asx_roic, conml, industry, ebit, invested_capital, roic),
+  n = 10
+)
+```
+
+### What to say
+
+* Pause here and make sure students can see that the new column now exists.
+* Also stress that we are still at the firm level. We have added a column, not changed the unit of analysis.
+
+```{r}
+asx_roic_names <- mutate(asx_roic, conml_upper = str_to_upper(conml))
+```
+
+```{r}
+slice_head(
+  select(asx_roic_names, conml, conml_upper, roic),
+  n = 10
+)
+```
+
+### What to say
+
+* `mutate()` is not only for arithmetic.
+* It can also apply functions to an existing column.
+* Here, `str_to_upper()` changes company names to uppercase.
+* The broader point is that `mutate()` is a general tool for creating transformed variables.
+
+## `|>`
+
+### What to say before coding
+
+* So far, we have gone one step at a time.
+* That is often the right way to work when learning or checking your work.
+* But sometimes the steps clearly belong together.
+* That is where the pipe helps.
+
+```{r}
+asx_roic_pipe <- asx_200_2024 |>
+  filter(!is.na(ebit), invested_capital > 0) |>
+  mutate(roic = ebit / invested_capital)
+```
+
+```{r}
+asx_roic_pipe |>
+  select(conml, industry, ebit, invested_capital, roic) |>
+  slice_head(n = 10)
+```
+
+### What to say
+
+* The pipe takes the result from one step and passes it into the next step.
+* This lets us write the workflow in the order the steps happen.
+* It is not the only valid style, but it is often easier to read.
+
+```{r}
+slice_head(
+  select(
+    mutate(
+      filter(asx_200_2024, !is.na(ebit), invested_capital > 0),
+      roic = ebit / invested_capital
+    ),
+    conml, industry, ebit, invested_capital, roic
+  ),
+  n = 10
+)
+```
+
+```{r}
+asx_200_2024 |>
+  filter(!is.na(ebit), invested_capital > 0) |>
+  mutate(roic = ebit / invested_capital) |>
+  select(conml, industry, ebit, invested_capital, roic) |>
+  slice_head(n = 10)
+```
+
+### What to say
+
+* Nested functions work, but they can be awkward because you have to read them from the inside out.
+* The pipe lets you read the same logic step by step.
+* Some students will prefer one style over the other, but this comparison usually makes the value of the pipe click.
+
+## `group_by()` + `summarise()` + `arrange()`
+
+### What to say before coding
+
+* Now we move from firm-level data to industry-level summaries.
+* This is the groups part of the lecture.
+* This is also the point where the data starts answering the business question more directly.
+
+```{r}
+industry_roic <- asx_roic |>
+  group_by(industry) |>
+  summarise(
+    avg_roic = mean(roic, na.rm = TRUE),
+    n_firms = n(),
+    .groups = "drop"
+  ) |>
+  arrange(desc(avg_roic))
+```
+
+```{r}
+industry_roic
+```
+
+### What to say
+
+* `group_by(industry)` divides the data into industry groups.
+* `summarise()` then collapses each group into one row.
+* `avg_roic` is the average ROIC within an industry.
+* `n_firms = n()` tells us how many firms are contributing to that average.
+* `arrange(desc(avg_roic))` ranks the industries from high to low.
+* This is a key conceptual moment: we have changed the unit of analysis. We are no longer looking at firms; we are looking at industries.
+
+```{r}
+industry_roic_5plus <- industry_roic |>
+  filter(n_firms >= 5)
+```
+
+```{r}
+industry_roic_5plus |>
+  slice_head(n = 10)
+```
+
+### What to say
+
+* Some industries have very few firms, so their averages may be less informative.
+* This step keeps industries with at least 5 firms.
+* It is a simple example of analysts using judgment rather than treating every summary as equally reliable.
+
+## `if_else()`
+
+### What to say before coding
+
+* `if_else()` is useful when we want two categories.
+* This is a nice way to show that we can turn a numeric result into a simple label.
+
+```{r}
+industry_roic_5plus <- industry_roic_5plus |>
+  mutate(
+    roic_vs_median = if_else(
+      avg_roic >= median(avg_roic, na.rm = TRUE),
+      "Above median",
+      "Below median"
+    )
+  )
+```
+
+```{r}
+industry_roic_5plus |>
+  select(industry, avg_roic, roic_vs_median) |>
+  slice_head(n = 10)
+```
+
+### What to say
+
+* The median gives us a data-driven cutoff.
+* `if_else()` asks a yes/no question and returns one of two labels.
+
+## `case_when()`
+
+### What to say before coding
+
+* `case_when()` is useful when we want more than two categories.
+* Here we use quartiles so the cutoffs come from the data.
+
+```{r}
+roic_q25 <- quantile(industry_roic_5plus$avg_roic, 0.25, na.rm = TRUE)
+roic_q50 <- quantile(industry_roic_5plus$avg_roic, 0.50, na.rm = TRUE)
+roic_q75 <- quantile(industry_roic_5plus$avg_roic, 0.75, na.rm = TRUE)
+```
+
+```{r}
+industry_roic_5plus |>
+  mutate(
+    performance_band = case_when(
+      avg_roic >= roic_q75 ~ "Top quartile",
+      avg_roic >= roic_q50 ~ "Upper-middle",
+      avg_roic >= roic_q25 ~ "Lower-middle",
+      TRUE ~ "Bottom quartile"
+    )
+  ) |>
+  select(industry, avg_roic, performance_band) |>
+  slice_head(n = 10)
+```
+
+### What to say
+
+* `case_when()` checks several conditions in order.
+* It is a flexible way to build multi-category labels from a continuous variable.
+
+## `group_by()` with combinations
+
+### What to say before coding
+
+* `group_by()` can take more than one variable.
+* To make that meaningful, we go back to the firm-level data.
+
+```{r}
+asx_roic_flag <- asx_roic |>
+  mutate(
+    roic_vs_median = if_else(
+      roic >= median(roic, na.rm = TRUE),
+      "Above median",
+      "Below median"
+    )
+  )
+```
+
+```{r}
+industry_roic_split <- asx_roic_flag |>
+  group_by(industry, roic_vs_median) |>
+  summarise(
+    n_firms = n(),
+    .groups = "drop"
+  )
+```
+
+```{r}
+industry_roic_split
+```
+
+### What to say
+
+* Now the groups are combinations of industry and ROIC category.
+* So instead of one summary per industry, we get subgroup counts within industries.
+
+## Summary plot
+
+### What to say before coding
+
+* At this point the wrangling is doing the real work.
+* The plot is there to communicate the result clearly, not to be the main event.
+
+```{r}
+top10_industries <- industry_roic_5plus |>
+  slice_head(n = 10) |>
+  mutate(industry = fct_reorder(industry, avg_roic))
+```
+
+```{r}
+top10_industries |>
+  ggplot(aes(x = industry, y = avg_roic, fill = industry)) +
+  geom_col(show.legend = FALSE) +
+  scale_fill_okabe_ito() +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "Average ROIC",
+    title = "Top ASX Industries by Average Return on Invested Capital",
+    subtitle = "Industries with at least 5 firms, 2024"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+### What to say
+
+* The plot is not the main lesson; the wrangling is.
+* But a clear plot is often the best way to present the final answer.
+* This is a good place to ask: what do you notice, and how would you explain this to a manager?
+
+## Closing wrap-up
+
+### What to say
+
+* The main point today is that a small number of `dplyr` functions can take us a long way.
+* The core workflow was: **rows → columns → groups → answer**.
+* `filter()` changed which rows we kept.
+* `mutate()` created new variables.
+* `group_by()` and `summarise()` moved us from firm-level data to industry-level summaries.
+* `arrange()` helped us rank the result.
+* The broader habit we want is not just writing code. It is using code to turn raw data into an answer someone can actually use.

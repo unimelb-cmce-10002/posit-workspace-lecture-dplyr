@@ -1,0 +1,60 @@
+---
+title: "Data Wrangling"
+author: "Foundations of Business Analytics"
+format: html
+---
+
+## R packages 
+
+```{r}
+library(tidyverse)
+```
+
+## Load and Inspect data
+
+```{r}
+asx <- read_csv("data/asx_200_2024.csv")
+```
+
+## Selecting Rows with `filter()`
+
+```{r}
+# Write code here
+```
+
+## Creating Columns with `mutate()`
+
+```{r}
+# Write code here
+
+```
+
+
+## Chaining Commans with the pipe operator `|>`
+
+```{r}
+# Write code here
+```
+
+
+## Grouping Data and Computing Summary Statistics
+
+```{r}
+# Write code here
+```
+
+
+
+## Advanced Material (if time)
+
+```{r}
+# Write code here
+
+```
+
+## Summary plot
+
+```{r}
+# Write code here
+```
+
